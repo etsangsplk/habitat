@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+message DatHeader {
+  optional uint64 services = 1;
+  optional uint64 service_config = 2;
+  optional uint64 service_files = 3;
+  optional uint64 elections = 4;
+  optional uint64 updates = 5;
+}

@@ -19,6 +19,7 @@
 use std::cmp::Ordering;
 use std::mem;
 use std::ops::{Deref, DerefMut};
+use std::path::Path;
 
 use habitat_core::service::ServiceGroup;
 use habitat_core::package::Identifiable;
@@ -27,7 +28,7 @@ use toml;
 
 use error::Result;
 use message::swim::{Service as ProtoService, Rumor as ProtoRumor, Rumor_Type as ProtoRumor_Type};
-use rumor::Rumor;
+use rumor::{Rumor, RumorStore};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Service(ProtoRumor);

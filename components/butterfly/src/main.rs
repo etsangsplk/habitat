@@ -22,6 +22,7 @@ use std::env;
 use std::thread;
 use std::time::Duration;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use habitat_butterfly::{server, member, trace};
 use habitat_butterfly::server::Suitability;
@@ -59,6 +60,7 @@ fn main() {
                                      trace::Trace::default(),
                                      None,
                                      None,
+                                     None::<PathBuf>,
                                      Box::new(ZeroSuitability))
         .unwrap();
     println!("Server ID: {}", server.member_id);

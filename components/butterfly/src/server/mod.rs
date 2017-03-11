@@ -27,16 +27,17 @@ pub mod push;
 pub mod timing;
 
 use std::collections::{HashSet, HashMap};
-use std::fmt;
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
+use std::fs;
 use std::io;
 use std::net::{ToSocketAddrs, UdpSocket, SocketAddr};
+use std::path::Path;
 use std::result;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::mpsc::channel;
-use std::time::Duration;
+use std::time::{Instant, Duration};
 use std::thread;
 
 use habitat_core::service::ServiceGroup;
@@ -48,7 +49,8 @@ use toml;
 use error::{Result, Error};
 use member::{Member, Health, MemberList};
 use message;
-use rumor::{Rumor, RumorStore, RumorList, RumorKey};
+use rumor::{Rumor, RumorList, RumorKey, RumorStore};
+use rumor::dat_file::DatFile;
 use rumor::service::Service;
 use rumor::service_config::ServiceConfig;
 use rumor::service_file::ServiceFile;
@@ -76,6 +78,7 @@ pub struct Server {
     pub swim_addr: Arc<RwLock<SocketAddr>>,
     pub gossip_addr: Arc<RwLock<SocketAddr>>,
     pub suitability_lookup: Arc<Box<Suitability>>,
+    pub dat_file: Arc<Option<DatFile>>,
     // These are all here for testing support
     pub pause: Arc<AtomicBool>,
     pub trace: Arc<RwLock<Trace>>,
@@ -87,16 +90,18 @@ pub struct Server {
 impl Server {
     /// Create a new server, bound to the `addr`, hosting a particular `member`, and with a
     /// `Trace` struct, a ring_key if you want encryption on the wire, and an optional server name.
-    pub fn new<T, U>(swim_addr: T,
-                     gossip_addr: U,
-                     member: Member,
-                     trace: Trace,
-                     ring_key: Option<SymKey>,
-                     name: Option<String>,
-                     suitability_lookup: Box<Suitability>)
-                     -> Result<Server>
+    pub fn new<T, U, P>(swim_addr: T,
+                        gossip_addr: U,
+                        member: Member,
+                        trace: Trace,
+                        ring_key: Option<SymKey>,
+                        name: Option<String>,
+                        data_path: Option<P>,
+                        suitability_lookup: Box<Suitability>)
+                        -> Result<Server>
         where T: ToSocketAddrs,
-              U: ToSocketAddrs
+              U: ToSocketAddrs,
+              P: AsRef<Path>
     {
         let maybe_swim_socket_addr = swim_addr.to_socket_addrs().map(|mut iter| iter.next());
         let maybe_gossip_socket_addr = gossip_addr.to_socket_addrs().map(|mut iter| iter.next());
@@ -118,6 +123,7 @@ impl Server {
                     swim_addr: Arc::new(RwLock::new(swim_socket_addr)),
                     gossip_addr: Arc::new(RwLock::new(gossip_socket_addr)),
                     suitability_lookup: Arc::new(suitability_lookup),
+                    dat_file: Arc::new(data_path.as_ref().map(|p| DatFile::new(p))),
                     pause: Arc::new(AtomicBool::new(false)),
                     trace: Arc::new(RwLock::new(trace)),
                     swim_rounds: Arc::new(AtomicIsize::new(0)),
@@ -192,6 +198,15 @@ impl Server {
     pub fn start(&self, timing: timing::Timing) -> Result<()> {
         let (tx_outbound, rx_inbound) = channel();
 
+        if let Some(ref file) = *self.dat_file {
+            file.init()?;
+            self.service_store.load(file)?;
+            self.service_config_store.load(file)?;
+            self.service_file_store.load(file)?;
+            self.election_store.load(file)?;
+            self.update_store.load(file)?;
+        }
+
         let socket =
             match UdpSocket::bind(*self.swim_addr.read().expect("Swim address lock is poisoned")) {
                 Ok(socket) => socket,
@@ -241,6 +256,15 @@ impl Server {
             push::Push::new(server_e, timing).run();
             panic!("You should never, ever get here, liu");
         });
+
+        if self.dat_file.is_some() {
+            let server_f = self.clone();
+            let _ =
+                thread::Builder::new().name(format!("persist-{}", self.name())).spawn(move || {
+                    persist_data(server_f);
+                    panic!("Data persistence loop unexpectedly quit!");
+                });
+        }
 
         Ok(())
     }
@@ -449,8 +473,7 @@ impl Server {
         if !self.check_quorum(e.key()) {
             e.no_quorum();
         }
-        self.election_store
-            .insert(e);
+        self.election_store.insert(e);
         self.rumor_list.insert(ek);
     }
 
@@ -461,8 +484,7 @@ impl Server {
         if !self.check_quorum(e.key()) {
             e.no_quorum();
         }
-        self.update_store
-            .insert(e);
+        self.update_store.insert(e);
         self.rumor_list.insert(ek);
     }
 
@@ -797,6 +819,19 @@ impl fmt::Display for Server {
     }
 }
 
+fn persist_data(server: Server) {
+    loop {
+        let next_check = Instant::now() + Duration::from_millis(30_000);
+        let dat_file = server.dat_file.unwrap();
+        println!("Writing rumors.dat to, {}", dat_file.path().display());
+        if let Some(err) = dat_file.write(&server).err() {
+            println!("Error persisting rumors to disk, {}", err);
+        }
+        let time_to_wait = next_check - Instant::now();
+        thread::sleep(time_to_wait);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     mod server {
@@ -805,6 +840,7 @@ mod tests {
         use server::timing::Timing;
         use member::Member;
         use trace::Trace;
+        use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
         static SWIM_PORT: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -834,6 +870,7 @@ mod tests {
                         Trace::default(),
                         None,
                         None,
+                        None::<PathBuf>,
                         Box::new(ZeroSuitability))
                 .unwrap()
         }
@@ -854,6 +891,7 @@ mod tests {
                                 Trace::default(),
                                 None,
                                 None,
+                                None::<PathBuf>,
                                 Box::new(ZeroSuitability))
                 .is_err())
         }

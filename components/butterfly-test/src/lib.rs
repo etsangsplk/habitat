@@ -21,6 +21,7 @@ extern crate habitat_core;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use std::thread;
 use std::ops::{Deref, DerefMut, Range};
+use std::path::PathBuf;
 use std::time::Duration;
 use std::str::FromStr;
 
@@ -63,6 +64,7 @@ pub fn start_server(name: &str, ring_key: Option<SymKey>, suitability: u64) -> S
                              Trace::default(),
                              ring_key,
                              Some(String::from(name)),
+                             None::<PathBuf>,
                              Box::new(NSuitability(suitability)))
         .unwrap();
     server.start(Timing::default()).expect("Cannot start server");

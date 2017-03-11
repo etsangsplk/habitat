@@ -23,6 +23,7 @@
 //! New rumors need to implement the `From` trait for `RumorKey`, and then can track the arrival of
 //! new rumors, and dispatch them according to their `kind`.
 
+pub mod dat_file;
 pub mod election;
 pub mod service;
 pub mod service_config;
@@ -37,6 +38,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::default::Default;
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::result;
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -134,9 +136,23 @@ impl<T: Rumor> RumorStore<T> {
         RumorStore { update_counter: Arc::new(AtomicUsize::new(counter)), ..Default::default() }
     }
 
+    pub fn len(&self) -> usize {
+        self.list
+            .read()
+            .expect("Rumor store lock poisoned")
+            .values()
+            .map(|member| member.len())
+            .collect()
+    }
+
     pub fn len_for_key(&self, key: &str) -> usize {
         let list = self.list.read().expect("Rumor store lock poisoned");
         list.get(key).map_or(0, |r| r.len())
+    }
+
+    pub fn load(&mut self, dat_file: &dat_file::DatFile) -> Result<()> {
+        println!("loading rumors from dat file");
+        Ok(())
     }
 
     /// Insert a rumor into the Rumor Store. Returns true if the value didn't exist or if it was

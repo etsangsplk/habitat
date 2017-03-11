@@ -111,6 +111,7 @@ impl Manager {
                                                  Trace::default(),
                                                  ring_key,
                                                  None,
+                                                 Some("/hab/sup/data"),
                                                  Box::new(SuitabilityLookup(services.clone()))));
         outputln!("Butterfly Member ID {}", server.member_id());
         for peer_addr in &cfg.gossip_peers {
